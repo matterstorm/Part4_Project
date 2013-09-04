@@ -80,7 +80,7 @@ uint8_t Radio_Transmitting = 0;
 
 uint8_t Radio_Message[RADIO_MESSAGE_SIZE];
 /* How many times to try a Tx and miss an acknowledge before doing a scan */
-#define MISSES_IN_A_ROW  2
+#define MISSES_IN_A_ROW  10
 
 /* callback handler */
 static uint8_t sCB(linkID_t);
@@ -176,7 +176,6 @@ static void linkTo()
 
 		if (SMPL_SUCCESS == SMPL_Receive(sLinkID1, Radio_Message, &len))
 			{
-
 			  processMessage(sLinkID1, Radio_Message, len);
 			}
 	}
@@ -219,7 +218,7 @@ static void linkTo()
           if (SMPL_SUCCESS == (rc=SMPL_SendOpt(sLinkID1, Send_Msg, sizeof(Send_Msg), SMPL_TXOPTION_ACKREQ)))
           {
             /* Message acked. We're done. Toggle LED 1 to indicate ack received. */
-            toggleLED(1);
+            //toggleLED(1);
             break;
           }
           if (SMPL_NO_ACK == rc)
@@ -265,22 +264,18 @@ static void linkTo()
 
 static void processMessage(linkID_t lid, uint8_t *msg, uint8_t len)
 {
-	int j;
   /* do something useful */
   if (len)
   {
 	  Radio_Received=0;
-	  Radio_Transmitting=1;
 	  switch(msg[1]){
 	  case 1:
-		  for (j=0;j<4;j++){
-			  Send_Msg[j]=VoltageData[j];
-		  }
+		  memcpy(Send_Msg, VoltageData, sizeof(VoltageData));
+		  Radio_Transmitting=1;
 		  break;
 	  case 2:
-		  for(j=0;j<4;j++){
-			  Send_Msg[j]=CurrentData[j];
-		  }
+		  memcpy(Send_Msg, CurrentData, sizeof(CurrentData));
+		  Radio_Transmitting=1;
 		  break;
 	  default: break;
 	  }

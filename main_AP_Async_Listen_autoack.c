@@ -104,12 +104,12 @@ Solution overview:
 unsigned char *PRxData;                     // Pointer to RX data
 unsigned char RXByteCtr;
 volatile unsigned char RxBuffer[128];       // Allocate 128 byte of RAM
-unsigned int Radio_Recieved = 0;
 void I2C_init(void);
 
 
 unsigned char reg = 0x00;
 unsigned int i= 0;
+unsigned int j=0;
 #define I2C_MESSAGE_SIZE 2
 #define RADIO_MESSAGE_SIZE 4
 
@@ -158,7 +158,7 @@ static uint8_t sChannel = 0;
 #endif  /* FREQUENCY_AGILITY */
 
 #define Data_Width 4
-#define MISSES_IN_A_ROW  2
+#define MISSES_IN_A_ROW  10
 
 /* blink LEDs when channel changes... */
 static volatile uint8_t sBlinky = 0;
@@ -167,7 +167,13 @@ static volatile uint8_t sBlinky = 0;
 
 #define SPIN_ABOUT_A_QUARTER_SECOND   NWK_DELAY(250)
 
+uint8_t Waiting_For_Reply=0;
 bspIState_t intState;
+uint8_t  I2C_msg[I2C_MESSAGE_SIZE];
+uint8_t  Radio_msg[RADIO_MESSAGE_SIZE];
+uint8_t  len;
+unsigned int Being_Polled;
+
 
 void main (void)
 {
@@ -316,9 +322,16 @@ static uint8_t sCB(linkID_t lid)
 {
   if (lid)
   {
-	Radio_Recieved=1;
     sPeerFrameSem++;
     sBlinky = 0;
+    if(Waiting_For_Reply==1){
+		if (SMPL_SUCCESS == SMPL_Receive(sLID[sNumCurrentPeers-1], Radio_msg, &len)){
+			  BSP_ENTER_CRITICAL_SECTION(intState);
+			  sPeerFrameSem--;
+			  BSP_EXIT_CRITICAL_SECTION(intState);
+		}
+		Waiting_For_Reply=0;
+	}
   }
   else
   {
@@ -409,9 +422,6 @@ __interrupt void USCI_B0_ISR(void)
 	uint8_t done,misses;
 	uint8_t      noAck;
 	smplStatus_t rc;
-	uint8_t  I2C_msg[I2C_MESSAGE_SIZE];
-	uint8_t  Radio_msg[RADIO_MESSAGE_SIZE];
-	uint8_t  len;
 	switch(__even_in_range(UCB0IV,12))
 	{
 		case  0: break;                           // Vector  0: No interrupts
@@ -433,56 +443,61 @@ __interrupt void USCI_B0_ISR(void)
 
 		case 10:                                  // Vector 10: RXIFG
 			reg = (uint8_t) UCB0RXBUF;		//Set reg to the value of register wanted to be read from
-			I2C_msg[1]=reg;
-			I2C_msg[0]=0;
-			done=0;
-			while (!done)
-			{
-				noAck = 0;
-
-				/* Try sending message MISSES_IN_A_ROW times looking for ack */
-				for (misses=0; misses < MISSES_IN_A_ROW; ++misses)
-				{
-				  if (SMPL_SUCCESS == (rc=SMPL_SendOpt(sLID[sNumCurrentPeers-1], I2C_msg, sizeof(I2C_msg), SMPL_TXOPTION_ACKREQ)))
-				  {
-					/* Message acked. We're done. Toggle LED 1 to indicate ack received. */
-					toggleLED(1);
-					break;
-				  }
-				  if (SMPL_NO_ACK == rc)
-				  {
-					/* Count ack failures. Could also fail becuase of CCA and
-					 * we don't want to scan in this case.
-					 */
-					noAck++;
-				  }
-				}
-				if (MISSES_IN_A_ROW == noAck)
-				{
-				  /* Message not acked. Toggle LED 2. */
-				  toggleLED(2);
-				#ifdef FREQUENCY_AGILITY
-				  /* Assume we're on the wrong channel so look for channel by
-				   * using the Ping to initiate a scan when it gets no reply. With
-				   * a successful ping try sending the message again. Otherwise,
-				   * for any error we get we will wait until the next button
-				   * press to try again.
-				   */
-				  if (SMPL_SUCCESS != SMPL_Ping(sLID[sNumCurrentPeers-1]))
-				  {
-					done = 1;
-				  }
-				#else
-				  done = 1;
-				#endif  /* FREQUENCY_AGILITY */
-				}
-				else
-				{
-				  /* Got the ack or we don't care. We're done. */
-				  done = 1;
-				}
+			if(reg==0x11){
+				Being_Polled=1;
 			}
+			else{
+				I2C_msg[1]=reg;
+				I2C_msg[0]=0;
+				done=0;
+				while (!done)
+				{
+					noAck = 0;
 
+					/* Try sending message MISSES_IN_A_ROW times looking for ack */
+					for (misses=0; misses < MISSES_IN_A_ROW; ++misses)
+					{
+					  if (SMPL_SUCCESS == (rc=SMPL_SendOpt(sLID[sNumCurrentPeers-1], I2C_msg, sizeof(I2C_msg), SMPL_TXOPTION_ACKREQ)))
+					  {
+						/* Message acked. We're done. Toggle LED 1 to indicate ack received. */
+						toggleLED(1);
+						break;
+					  }
+					  if (SMPL_NO_ACK == rc)
+					  {
+						/* Count ack failures. Could also fail becuase of CCA and
+						 * we don't want to scan in this case.
+						 */
+						noAck++;
+					  }
+					}
+					if (MISSES_IN_A_ROW == noAck)
+					{
+					  /* Message not acked. Toggle LED 2. */
+					  toggleLED(2);
+					#ifdef FREQUENCY_AGILITY
+					  /* Assume we're on the wrong channel so look for channel by
+					   * using the Ping to initiate a scan when it gets no reply. With
+					   * a successful ping try sending the message again. Otherwise,
+					   * for any error we get we will wait until the next button
+					   * press to try again.
+					   */
+					  if (SMPL_SUCCESS != SMPL_Ping(sLID[sNumCurrentPeers-1]))
+					  {
+						done = 1;
+					  }
+					#else
+					  done = 1;
+					#endif  /* FREQUENCY_AGILITY */
+					}
+					else
+					{
+					  /* Got the ack or we don't care. We're done. */
+					  done = 1;
+					}
+				}
+				Waiting_For_Reply=1;
+			}
 			break;
 		case 12:
 			/*switch(reg)
@@ -499,29 +514,18 @@ __interrupt void USCI_B0_ISR(void)
 			if(i>=Data_Width*2){
 				i=0;
 			}*/
-
-			while(!Radio_Recieved);
-			if (SMPL_SUCCESS == SMPL_Receive(sLID[sLID[sNumCurrentPeers-1]], Radio_msg, &len))
-				{
-				  //processMessage(sLID[sLID[sNumCurrentPeers-1]], msg, len);
-
-				  BSP_ENTER_CRITICAL_SECTION(intState);
-				  sPeerFrameSem--;
-				  BSP_EXIT_CRITICAL_SECTION(intState);
+			if(Being_Polled&&j==0){
+				UCB0TXBUF=Waiting_For_Reply;
+				if(Waiting_For_Reply==0){
+					Being_Polled=0;
 				}
-			switch(reg)
-			{
-				case 0x01:
-					UCB0TXBUF=VoltageData[i/2];
-					break;
-				case 0x02:
-					UCB0TXBUF=CurrentData[i/2];
-					break;
-				default: break;
 			}
-			i++;
-			if(i>=Data_Width*2){
-				i=0;
+			else{
+				UCB0TXBUF=Radio_msg[j/2];
+				j++;
+				if(j>=Data_Width*2){
+					j=0;
+				}
 			}
 			break;                           // Vector 12: TXIFG
 
